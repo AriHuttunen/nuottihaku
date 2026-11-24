@@ -1,0 +1,12 @@
+{
+  "name": "nuottihaku",
+  "version": "0.1.0",
+  "description": "Static web page that finds sheet music by song title in the Helsinki-area libraries through the open Finna API",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "test": "node --test test/*.test.js"
+  }
+}

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="fi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nuottihaku</title>
+  <meta name="description" content="Etsi nuotti laulun nimellä pääkaupunkiseudun kirjastoista (Helmet, Helka, 3AMK).">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%BC%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header>
+    <div class="top">
+      <h1 data-t="heading">Nuottihaku</h1>
+      <button type="button" id="lang" class="plain"></button>
+    </div>
+    <p data-t="intro"></p>
+  </header>
+
+  <main>
+    <form id="form">
+      <label>
+        <span data-t="titleLabel"></span>
+        <input id="title" name="q" type="search" required autocomplete="off"
+               autocapitalize="sentences" enterkeyhint="search">
+      </label>
+      <label>
+        <span data-t="artistLabel"></span>
+        <input id="artist" name="artist" type="search" autocomplete="off"
+               enterkeyhint="search">
+      </label>
+      <fieldset>
+        <legend data-t="librariesLabel"></legend>
+        <label class="check"><input type="checkbox" name="lib" value="helmet" checked> Helmet</label>
+        <label class="check"><input type="checkbox" name="lib" value="helka" checked> Helka</label>
+        <label class="check"><input type="checkbox" name="lib" value="3amk" checked> 3AMK</label>
+      </fieldset>
+      <button type="submit" data-t="search"></button>
+    </form>
+
+    <p id="status" role="status" aria-live="polite"></p>
+    <ol id="results"></ol>
+    <button type="button" id="more" hidden data-t="more"></button>
+  </main>
+
+  <footer>
+    <p data-t="footerData"></p>
+    <p data-t="footerCards"></p>
+  </footer>
+</body>
+</html>
