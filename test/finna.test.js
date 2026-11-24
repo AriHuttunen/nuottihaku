@@ -3,8 +3,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildQuery, buildSearchParams, contentsOf, describeGroup, excerpt, findSong, fold,
-  hasPhrase, localIdsOf, parseMarc, placesOf, searchScores,
+  activeFilters, buildQuery, buildSearchParams, classify, contentsOf,
+  describeGroup, describingText, excerpt, findSong, fold, hasPhrase,
+  localIdsOf, matchesFilters, parseMarc, placesOf, searchScores,
 } from '../finna.js';
 
 const field = (tag, ind2, subs) =>
@@ -142,6 +143,56 @@ test('a group says how the song was found', () => {
   assert.equal(describeGroup({}, [HELMET], 'Jokin muu').status, 'unconfirmed');
 });
 
+test('filters add their words to the query as alternatives', () => {
+  assert.equal(
+    buildQuery('Yesterday', 'Beatles', { instrument: 'ukulele', notation: ['tab'], easy: false }),
+    '"Yesterday" AND (Beatles) AND (ukulele*) AND (tabulatuur* OR tablatur* OR tab)',
+  );
+  assert.equal(buildQuery('Yesterday', '', { instrument: 'theremin', notation: ['x'] }), '"Yesterday"');
+  assert.deepEqual(activeFilters({ instrument: 'piano', notation: ['chords'], easy: true }),
+    [['instrument', 'piano'], ['notation', 'chords'], ['level', 'easy']]);
+});
+
+test('a description is classified by whole words and word beginnings', () => {
+  assert.deepEqual(classify('Easy piano | Sanat, melodia, sointumerkit. Kitaran otetaulukko.'), {
+    instrument: ['piano', 'guitar'],
+    notation: ['chords', 'lyrics', 'melody'],
+    level: ['easy'],
+  });
+  // "tab" is a whole word, so a table is not tablature; a bassoon is not a bass.
+  assert.deepEqual(classify('Table of bassoon pieces'),
+    { instrument: [], notation: [], level: [] });
+  assert.deepEqual(classify('Kitaranuotinnos vain TABULATUURINA. Taso: keskitaso').notation, ['tab']);
+  assert.deepEqual(classify('Nuotinnos: kosketinsoitinsäestys').notation, ['accompaniment']);
+  assert.deepEqual(classify('Sähkökitara, alkeistaso').level, ['easy']);
+});
+
+test('the classified text is the description, not the contents', () => {
+  const rec = {
+    title: 'Suuri toivelaulukirja',
+    generalNotes: ['Sanat, melodia, sointumerkit.'],
+    fullRecord: marc(
+      field('650', '7', [['a', 'ukulele'], ['2', 'yso/fin'], ['0', 'http://www.yso.fi/onto/yso/p1234']]),
+      field('730', ' ', [['a', 'Piano man /'], ['g', 'Joel, Billy']]),
+    ),
+  };
+  const text = describingText(rec);
+  assert.ok(text.includes('ukulele') && !text.includes('Piano man') && !text.includes('yso'));
+  assert.deepEqual(classify(text).instrument, ['ukulele']);
+});
+
+test('a group carries the tags of all its copies and is checked against the filters', () => {
+  const g = describeGroup({}, [HELMET, AMK], 'Elefantin paino');
+  assert.deepEqual(g.tags, {
+    instrument: ['guitar'], notation: ['chords', 'lyrics', 'melody'], level: [],
+  });
+  assert.ok(matchesFilters(g.tags, {}));
+  assert.ok(matchesFilters(g.tags, { instrument: 'guitar', notation: ['chords', 'lyrics'] }));
+  assert.ok(!matchesFilters(g.tags, { instrument: 'piano' }));
+  assert.ok(!matchesFilters(g.tags, { notation: ['chords', 'tab'] }));
+  assert.ok(!matchesFilters(g.tags, { easy: true }));
+});
+
 /** A fake fetch that answers /search and /record from the given data. */
 function fakeFetch(searches, records) {
   const calls = [];
@@ -172,6 +223,32 @@ test('a search fetches the local copies and puts confirmed songs first', async (
   assert.deepEqual(out.groups.map((g) => g.status), ['song', 'unconfirmed']);
   assert.equal(out.artistDropped, false);
   assert.equal(calls.length, 2);
+});
+
+test('a filtered search narrows the query and leaves out hits that do not fit', async () => {
+  // The API matches "piano" anywhere, here in a song title in the contents.
+  const pianoMan = {
+    id: 'helmet.7', title: 'Kitarakirja',
+    fullRecord: marc(field('730', ' ', [['a', 'Piano man /']]), field('730', ' ', [['a', 'Elefantin paino /']])),
+  };
+  const pianoBook = {
+    id: 'helmet.8', title: 'Pop-pianisti',
+    generalNotes: ['Helppoja sovituksia pianolle.'],
+    fullRecord: marc(field('730', ' ', [['a', 'Elefantin paino /']])),
+  };
+  const { impl, calls } = fakeFetch(() => ({
+    status: 'OK',
+    resultCount: 2,
+    records: [{ id: 'helmet.7', dedupIds: ['helmet.7'] }, { id: 'helmet.8', dedupIds: ['helmet.8'] }],
+  }), { 'helmet.7': pianoMan, 'helmet.8': pianoBook });
+
+  const out = await searchScores(
+    { title: 'Elefantin paino', filters: { instrument: 'piano', easy: true } }, impl,
+  );
+  assert.match(calls[0].searchParams.get('lookfor'), /AND \(piano\* OR .*\) AND \(alkeistaso\* OR /);
+  assert.equal(out.resultCount, 2);
+  assert.equal(out.fetched, 2);
+  assert.deepEqual(out.groups.map((g) => g.title), ['Pop-pianisti']);
 });
 
 test('an artist that finds nothing is dropped and reported', async () => {

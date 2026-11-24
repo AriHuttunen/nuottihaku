@@ -15,6 +15,10 @@ hit's catalogued contents and shows:
 - the cities, campuses and branches that hold it, with a link to the record
   page for shelf status and reservations.
 
+Results can be narrowed by instrument, by what the notation has (chord
+symbols, lyrics, melody, tablature, piano accompaniment) and to publications
+marked easy. Each result shows the same properties as tags.
+
 The page is in Finnish and English.
 
 ## How it works
@@ -32,6 +36,34 @@ is no server, no build step and no API key.
    and title entries (700) and contents notes (505). Helmet catalogues one
    added title per song, 3AMK writes a contents note.
 
+### Filters
+
+The catalogues have no field for the instrument, the notation or the level.
+These are said in subject headings, in the title and in free-text notes such
+as "Sanat, melodia, sointumerkit". `FILTERS` in `finna.js` lists, for each
+filter value, the words that mean it; `piano*` is any word starting with
+"piano".
+
+A filter works in two steps:
+
+1. Its words are added to the search query as alternatives, so Finna returns
+   fewer hits. The API looks in every field, so a songbook that contains
+   "Piano man" is still a hit for "piano".
+2. Each hit's title, subjects and notes, but not its contents, are checked
+   against the same words. Only hits that pass are shown, and the same check
+   gives the tags.
+
+Because of step 2, a page of 20 search results can show fewer than 20
+publications. The page then reads on, up to four pages at a time, and says how
+many search results it has read.
+
+The word lists come from a study of about 1,000 score records for 20 popular
+songs (November 2026). In that sample 85% of records named an instrument and
+79% said something about the notation, but only 20% stated a level. The easy
+filter therefore leaves out many publications that may be easy.
+
+### Result marks
+
 Each result is marked as one of:
 
 | Mark | Meaning |
@@ -47,6 +79,9 @@ Each result is marked as one of:
 - The page shows which library owns a publication, not whether a copy is on
   the shelf. Live shelf status is not in the Finna API, and the website
   endpoint that has it cannot be called from another site's page.
+- The filters depend on how each publication was described. A songbook with
+  guitar chord charts counts as "guitar", not only guitar arrangements; add
+  the tablature filter to find those.
 - Each library system needs its own library card.
 
 ## Files
@@ -67,7 +102,8 @@ python3 -m http.server 8000
 ```
 
 Then open http://localhost:8000. A search can be linked to directly:
-`http://localhost:8000/?q=Elefantin+paino&artist=Ellinoora`.
+`http://localhost:8000/?q=Elefantin+paino&artist=Ellinoora`. Filters are in
+the link too: `&inst=guitar&has=chords,tab&easy=1`.
 
 Tests need Node 20 or newer and no dependencies:
 
@@ -77,10 +113,9 @@ npm test
 
 ## Deploy
 
-Any static host works. On GitHub Pages, which is free for public
-repositories: push the directory to a repository, then in the repository's
-Settings → Pages choose "Deploy from a branch", the `main` branch and the
-`/ (root)` folder.
+The page is live at https://arihuttunen.github.io/nuottihaku/ on GitHub Pages,
+which serves the root of the `main` branch. A push to `main` redeploys it.
+Any other static host works the same way.
 
 ## Data
 

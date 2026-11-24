@@ -52,27 +52,117 @@ export function recordUrl(id) {
 
 const words = (s) => String(s).match(/[\p{L}\p{N}]+/gu) ?? [];
 
+// ----------------------------------------------------------------- filters
+
+// What a publication is for and what its notation holds is not a field of its
+// own in the catalogues. It is said in subject headings, in the title and in
+// free-text notes, so each filter value is a list of words to look for there.
+// "piano*" matches any word starting with piano, a plain word only itself.
+// Accents are kept: the API finds "säest*" but not "saest*".
+export const FILTERS = {
+  instrument: {
+    piano: ['piano*', 'kosketinsoi*', 'keyboard*', 'klaver*', 'sähköuru*'],
+    guitar: ['kitara*', 'sähkökitara*', 'guitar*', 'gitarr*'],
+    ukulele: ['ukulele*'],
+    bass: ['bassokitara*', 'sähköbasso*', 'basso', 'bass'],
+    strings: [
+      'viulu*', 'violin*', 'alttoviulu*', 'viola', 'sello*', 'cello*',
+      'kontrabasso*', 'jousisoit*',
+    ],
+    wind: [
+      'huilu*', 'nokkahuilu*', 'flute*', 'recorder*', 'klarinet*', 'clarinet*',
+      'saksofon*', 'saxophon*', 'trumpet*', 'pasuuna*', 'trombone*', 'oboe*',
+      'käyrätorv*', 'puhallin*', 'puhaltim*',
+    ],
+    accordion: ['harmonik*', 'hanuri*', 'accordion*'],
+    drums: ['rummu*', 'rumpu*', 'drum*', 'lyömäsoi*', 'percussion*'],
+    voice: [
+      'kuoro*', 'sekakuoro*', 'naiskuoro*', 'mieskuoro*', 'lapsikuoro*',
+      'nuorisokuoro*', 'choir*', 'lauluään*', 'yksinlaul*', 'vocal*', 'voice*',
+    ],
+  },
+  notation: {
+    chords: ['sointu*', 'soinnu*', 'otetaul*', 'chord*', 'ackord*'],
+    lyrics: ['sanat', 'sanoitu*', 'lyric*'],
+    melody: ['melod*', 'laulumelod*', 'sävelmänuot*'],
+    tab: ['tabulatuur*', 'tablatur*', 'tab'],
+    accompaniment: [
+      'kosketinsoitinsäest*', 'kosketinsoitinsäestys', 'pianosäest*',
+      'pianosäestys', 'kosketinsoitinnuotinn*', 'pianonuotinn*',
+    ],
+  },
+  level: {
+    easy: [
+      'alkeistaso*', 'alkeis*', 'helpp*', 'helpo*', 'easy', 'easiest',
+      'beginner*', 'aloittel*', 'nybörjar*',
+    ],
+    advanced: ['keskitaso*', 'edistyn*', 'intermediate*', 'advanced*'],
+  },
+};
+
+const EDGE = '[\\p{L}\\p{N}]';
+const termRegex = (terms) => new RegExp(
+  `(?<!${EDGE})(?:${terms
+    .map((t) => (t.endsWith('*') ? `${t.slice(0, -1)}${EDGE}*` : t))
+    .join('|')})(?!${EDGE})`,
+  'u',
+);
+const REGEX = Object.fromEntries(Object.entries(FILTERS).map(([kind, values]) => [
+  kind,
+  Object.entries(values).map(([key, terms]) => [key, termRegex(terms)]),
+]));
+
+/** The filter values a text mentions: { instrument: [], notation: [], level: [] }. */
+export function classify(text) {
+  const lower = String(text ?? '').toLocaleLowerCase('fi');
+  return Object.fromEntries(Object.entries(REGEX).map(([kind, list]) => [
+    kind, list.filter(([, re]) => re.test(lower)).map(([key]) => key),
+  ]));
+}
+
+/** The chosen filters as [kind, key] pairs, unknown values left out. */
+export function activeFilters(filters = {}) {
+  const out = [];
+  if (FILTERS.instrument[filters.instrument]) out.push(['instrument', filters.instrument]);
+  for (const key of filters.notation ?? []) {
+    if (FILTERS.notation[key]) out.push(['notation', key]);
+  }
+  if (filters.easy) out.push(['level', 'easy']);
+  return out;
+}
+
+/** True when the tags from classify() have every chosen filter value. */
+export function matchesFilters(tags, filters) {
+  return activeFilters(filters).every(([kind, key]) => tags[kind].includes(key));
+}
+
 /**
  * The song title is searched as a phrase. The artist is added as separate
  * words, because catalogues write names both ways round ("Tapio, Juha").
+ * Each filter adds its words as alternatives, which narrows the search on
+ * Finna's side. The API looks in every field, so it finds somewhat more than
+ * the filter means, and the results are checked again with classify().
  */
-export function buildQuery(title, artist = '') {
+export function buildQuery(title, artist = '', filters = {}) {
   const phrase = String(title).replace(/["\\]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!phrase) throw new FinnaError('empty-title');
+  const parts = [`"${phrase}"`];
   const names = words(artist);
-  return names.length
-    ? `"${phrase}" AND (${names.join(' AND ')})`
-    : `"${phrase}"`;
+  if (names.length) parts.push(`(${names.join(' AND ')})`);
+  for (const [kind, key] of activeFilters(filters)) {
+    parts.push(`(${FILTERS[kind][key].join(' OR ')})`);
+  }
+  return parts.join(' AND ');
 }
 
 export function buildSearchParams(opts) {
   const {
-    title, artist = '', libraries = LIBRARY_KEYS, page = 1, limit = 20,
-    lng = 'fi',
+    title, artist = '', filters = {}, libraries = LIBRARY_KEYS, page = 1,
+    limit = 20, lng = 'fi',
   } = opts;
   if (!libraries.length) throw new FinnaError('no-library');
   const p = new URLSearchParams();
-  p.set('lookfor', buildQuery(title, artist));
+  p.set('lookfor', buildQuery(title, artist, filters));
   p.set('type', 'AllFields');
   p.set('sort', 'relevance');
   p.set('page', String(page));
@@ -181,6 +271,25 @@ export function contentsOf(record) {
     }
   }
   return out;
+}
+
+// MARC fields that say what a publication is for: title and series, subject
+// and genre headings, medium of performance, audience, and the notes.
+const DESCRIBING = new Set([
+  '245', '246', '348', '382', '385', '490', '500', '521', '546', '650', '655',
+]);
+// Subfields that hold identifiers and source codes, not words.
+const CODES = new Set(['0', '1', '2', '5', '6', '8', '9']);
+
+/** The text of a record that classify() reads. Contents are left out on
+ * purpose: a songbook with "Piano man" in it is not a piano book. */
+export function describingText(record) {
+  const parts = [record.title ?? '', ...(record.generalNotes ?? [])];
+  for (const f of parseMarc(record.fullRecord)) {
+    if (!DESCRIBING.has(f.tag)) continue;
+    parts.push(f.subs.filter(([c]) => !CODES.has(c)).map(([, v]) => v).join(' '));
+  }
+  return parts.filter((x) => typeof x === 'string').join(' | ');
 }
 
 // ---------------------------------------------------------------- matching
@@ -297,6 +406,9 @@ export function localIdsOf(record, libraries = LIBRARY_KEYS) {
  *        "unconfirmed" the search matched, but the contents do not show why
  */
 export function describeGroup(representative, records, title) {
+  // The copies of one publication are catalogued separately, and one library
+  // often says what another leaves out, so their descriptions are read together.
+  const tags = classify(records.map(describingText).join(' | '));
   const holdings = records.map((r) => {
     const contents = contentsOf(r);
     return {
@@ -323,6 +435,7 @@ export function describeGroup(representative, records, title) {
     publishers: first.publishers ?? [],
     notes: holdings.find((h) => h.notes.length)?.notes ?? [],
     status,
+    tags,
     matches,
     contents: best?.contents ?? [],
     holdings,
@@ -335,6 +448,10 @@ const RANK = { song: 0, title: 1, unconfirmed: 2 };
  * Searches musical scores for a song title and reads each hit's contents.
  * When the artist narrows the search to nothing, it is searched again without
  * the artist and `artistDropped` is set.
+ *
+ * With filters, `resultCount` is what the API found for the narrowed search
+ * and `groups` holds only the hits that pass matchesFilters, so a page can
+ * come back with fewer groups than `fetched`, or none.
  */
 export async function searchScores(opts, fetchImpl = fetch) {
   const libraries = opts.libraries?.length ? opts.libraries : LIBRARY_KEYS;
@@ -358,7 +475,7 @@ export async function searchScores(opts, fetchImpl = fetch) {
       localIdsOf(r, libraries).map((id) => records.get(id)).filter(Boolean),
       opts.title,
     ))
-    .filter((g) => g.holdings.length);
+    .filter((g) => g.holdings.length && matchesFilters(g.tags, opts.filters));
   // Stable sort: confirmed songs first, the API's relevance order within each.
   groups.sort((a, b) => RANK[a.status] - RANK[b.status]);
   return {
